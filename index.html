@@ -1,0 +1,348 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>Cámara Synth V6 (Final)</title>
+    <style>
+        /* Reset total para evitar bloqueos */
+        * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
+        body { font-family: sans-serif; background: #000; color: #fff; height: 100vh; margin: 0; overflow: hidden; touch-action: none; }
+        
+        /* PANTALLA DE INICIO (Cubre todo, imposible no darle) */
+        #startScreen {
+            position: fixed; top: 0; left: 0; width: 100%; height: 100%;
+            background: linear-gradient(135deg, #001133, #000000);
+            display: flex; flex-direction: column; align-items: center; justify-content: center;
+            z-index: 9999; /* Por encima de TODO */
+            cursor: pointer;
+        }
+        #startText {
+            font-size: 1.5rem; font-weight: bold; color: #00d2ff;
+            text-align: center; padding: 20px;
+            animation: pulse 1.5s infinite;
+            pointer-events: none; /* Dejar pasar el click al div padre */
+        }
+        @keyframes pulse { 0% { opacity: 0.5; transform: scale(0.95); } 50% { opacity: 1; transform: scale(1.05); } 100% { opacity: 0.5; transform: scale(0.95); } }
+
+        /* UI Principal */
+        #mainUI { position: relative; width: 100%; height: 100%; display: none; flex-direction: column; align-items: center; justify-content: center; }
+
+        /* Video */
+        #videoContainer {
+            position: relative; width: 95%; max-width: 600px; aspect-ratio: 4 / 3;
+            border-radius: 12px; overflow: hidden; border: 4px solid #333;
+            transition: border-color 0.5s ease; box-shadow: 0 0 20px rgba(0,0,0,0.5); z-index: 1;
+        }
+        video { width: 100%; height: 100%; object-fit: cover; }
+        
+        #visualizer {
+            position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%);
+            width: 50px; height: 50px; border-radius: 50%; background-color: white;
+            opacity: 0; pointer-events: none; transition: opacity 0.1s, transform 0.1s; z-index: 10;
+        }
+
+        /* Botón Ajustes (Arriba derecha) */
+        #controlsContainer { position: absolute; top: 20px; right: 20px; z-index: 50; }
+        .float-btn {
+            background: rgba(0, 210, 255, 0.2); border: 1px solid #00d2ff; color: #fff;
+            padding: 12px 20px; border-radius: 25px; cursor: pointer; font-size: 1rem;
+            backdrop-filter: blur(5px); font-weight: bold;
+        }
+
+        /* Panel Sintetizador */
+        #synthPanel {
+            position: absolute; bottom: 0; left: 0; width: 100%; height: 80%;
+            background: rgba(15, 15, 25, 0.98); border-top-left-radius: 20px; border-top-right-radius: 20px;
+            padding: 20px; box-sizing: border-box; transform: translateY(110%);
+            transition: transform 0.3s cubic-bezier(0.175, 0.885, 0.32, 1.275); 
+            z-index: 100; overflow-y: auto; display: flex; flex-direction: column; gap: 20px;
+        }
+        #synthPanel.open { transform: translateY(0); }
+
+        /* Estilos controles */
+        .control-group { background: rgba(255,255,255,0.08); padding: 15px; border-radius: 12px; }
+        .control-group h3 { margin: 0 0 15px 0; color: #00d2ff; font-size: 1.1rem; border-bottom: 1px solid #444; padding-bottom:5px; }
+        .slider-row { display: flex; align-items: center; justify-content: space-between; margin-bottom: 15px; font-size: 1rem; }
+        input[type=range] { flex-grow: 1; margin-left: 15px; height: 20px; } /* Hitbox más grande */
+
+        #topBar { position: absolute; top: 20px; left: 20px; z-index: 5; text-shadow: 0 2px 4px black; pointer-events: none;}
+        #modeLabel { font-weight: bold; font-size: 1.2rem; }
+        
+        /* Canvas oculto */
+        #processingCanvas { display: none; }
+    </style>
+</head>
+<body>
+
+    <div id="startScreen">
+        <div id="startText">👆 TOCA LA PANTALLA<br>PARA INICIAR</div>
+        <div style="margin-top:20px; font-size: 0.8rem; color: #666;">Versión 6.0</div>
+    </div>
+
+    <div id="mainUI">
+        <div id="topBar"><div id="modeLabel">Cargando...</div></div>
+        
+        <div id="controlsContainer">
+            <button class="float-btn" id="toggleSynthBtn">🎛️ Ajustes</button>
+        </div>
+        
+        <div id="videoContainer">
+             <video id="video" autoplay playsinline webkit-playsinline></video>
+             <div id="visualizer"></div>
+        </div>
+
+        <div id="synthPanel">
+            <div style="display: flex; justify-content: space-between; align-items:center;">
+                <h2 style="margin:0">Sintetizador</h2>
+                <button class="float-btn" id="closeSynthBtn" style="background:rgba(255,50,50,0.3); border-color:#f00;">Cerrar</button>
+            </div>
+            
+            <div class="control-group">
+                <h3>🌊 Mezclador</h3>
+                <div class="slider-row"><span>Seno</span><input type="range" id="volSine" max="100" value="80"></div>
+                <div class="slider-row"><span>Triang</span><input type="range" id="volTri" max="100" value="0"></div>
+                <div class="slider-row"><span>Cuad</span><input type="range" id="volSqr" max="100" value="0"></div>
+                <div class="slider-row"><span>Sierra</span><input type="range" id="volSaw" max="100" value="0"></div>
+            </div>
+            <div class="control-group">
+                <h3>📈 Forma</h3>
+                <div class="slider-row"><span>Ataque</span><input type="range" id="envAttack" min="1" max="100" value="10"></div>
+                <div class="slider-row"><span>Largo</span><input type="range" id="envRelease" min="10" max="200" value="50"></div>
+            </div>
+            <div class="control-group">
+                <h3>✨ Efectos / Cámara</h3>
+                <div class="slider-row"><span>Eco</span><input type="range" id="fxDelay" max="80" value="30"></div>
+                <div class="slider-row"><span>Brillo</span><input type="range" id="fxFilter" min="100" max="5000" value="2000"></div>
+                <div class="slider-row"><span>Sensibil.</span><input type="range" id="camSense" min="1" max="100" value="50"></div>
+            </div>
+            <div style="height: 100px;"></div>
+        </div>
+    </div>
+
+    <canvas id="processingCanvas" width="100" height="75"></canvas>
+
+<script>
+    // Referencias
+    const startScreen = document.getElementById('startScreen');
+    const mainUI = document.getElementById('mainUI');
+    const synthPanel = document.getElementById('synthPanel');
+    const controls = {}; // Se llenará dinámicamente
+    
+    // Audio y Video Vars
+    let audioCtx, masterGain, delayNode, delayFeedback;
+    let video, pCtx, pCanvas;
+    let previousFrameData = null;
+    let lastNoteTime = 0;
+    
+    // Teoría Musical
+    const ROOT = 261.63; 
+    const R=1, m2=1.059, M2=1.122, m3=1.189, M3=1.260, P4=1.335, d5=1.414, P5=1.498, m6=1.587, M6=1.682, m7=1.782, M7=1.888;
+    const GREEK_MODES = {
+        IONIAN: { name: "Jónico", hex: '#ff3232', ratios: [R, M2, M3, P4, P5, M6, M7] },
+        MIXOLYDIAN: { name: "Mixolidio", hex: '#ffa500', ratios: [R, M2, M3, P4, P5, M6, m7] },
+        LYDIAN: { name: "Lidio", hex: '#ffff00', ratios: [R, M2, M3, d5, P5, M6, M7] },
+        PHRYGIAN: { name: "Frigio", hex: '#32cd32', ratios: [R, m2, m3, P4, P5, m6, m7] },
+        DORIAN: { name: "Dórico", hex: '#00ffff', ratios: [R, M2, m3, P4, P5, M6, m7] },
+        AEOLIAN: { name: "Eólico", hex: '#1e90ff', ratios: [R, M2, m3, P4, P5, m6, m7] },
+        LOCRIAN: { name: "Locrio", hex: '#ee82ee', ratios: [R, m2, m3, P4, d5, m6, m7] }
+    };
+    let currentMode = GREEK_MODES.IONIAN;
+
+    // --- INICIO DE LA APLICACIÓN ---
+    // Usamos touchstart Y click para asegurar que funcione
+    startScreen.addEventListener('click', initSystem);
+    startScreen.addEventListener('touchstart', initSystem);
+
+    async function initSystem(e) {
+        // Evitar doble disparo
+        startScreen.removeEventListener('click', initSystem);
+        startScreen.removeEventListener('touchstart', initSystem);
+        e.preventDefault();
+
+        // 1. Iniciar Audio (Requiere gesto usuario)
+        audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+        await audioCtx.resume();
+        initAudioNodes();
+
+        // 2. UI
+        startScreen.style.display = 'none';
+        mainUI.style.display = 'flex';
+        mapControls();
+
+        // 3. Cámara
+        try {
+            video = document.getElementById('video');
+            pCanvas = document.getElementById('processingCanvas');
+            pCtx = pCanvas.getContext('2d', { willReadFrequently: true });
+
+            const stream = await navigator.mediaDevices.getUserMedia({ 
+                video: { facingMode: "environment", width: { ideal: 320 }, height: { ideal: 240 } }, 
+                audio: false 
+            });
+            video.srcObject = stream;
+            video.onloadeddata = () => requestAnimationFrame(processLoop);
+        } catch (err) {
+            alert("Error Cámara: " + err.message);
+        }
+    }
+
+    function mapControls() {
+        controls.sine = document.getElementById('volSine');
+        controls.tri = document.getElementById('volTri');
+        controls.sqr = document.getElementById('volSqr');
+        controls.saw = document.getElementById('volSaw');
+        controls.attack = document.getElementById('envAttack');
+        controls.release = document.getElementById('envRelease');
+        controls.delay = document.getElementById('fxDelay');
+        controls.filter = document.getElementById('fxFilter');
+        controls.sense = document.getElementById('camSense');
+
+        document.getElementById('toggleSynthBtn').onclick = () => synthPanel.classList.add('open');
+        document.getElementById('closeSynthBtn').onclick = () => synthPanel.classList.remove('open');
+    }
+
+    function initAudioNodes() {
+        masterGain = audioCtx.createGain();
+        masterGain.gain.value = 0.5;
+        delayNode = audioCtx.createDelay();
+        delayNode.delayTime.value = 0.4;
+        delayFeedback = audioCtx.createGain();
+        delayFeedback.gain.value = 0.3;
+        delayNode.connect(delayFeedback);
+        delayFeedback.connect(delayNode);
+        delayNode.connect(audioCtx.destination);
+        masterGain.connect(audioCtx.destination);
+    }
+
+    // --- BUCLE PRINCIPAL ---
+    function processLoop(timestamp) {
+        requestAnimationFrame(processLoop);
+        if (timestamp - lastNoteTime * 1000 < 30) return;
+
+        if (video.readyState === 4) {
+            pCtx.drawImage(video, 0, 0, pCanvas.width, pCanvas.height);
+            const data = pCtx.getImageData(0, 0, pCanvas.width, pCanvas.height).data;
+
+            let motion = 0, rT=0, gT=0, bT=0, count=0;
+            
+            for (let i = 0; i < data.length; i += 64) {
+                rT+=data[i]; gT+=data[i+1]; bT+=data[i+2]; count++;
+                if (previousFrameData) {
+                    if (Math.abs(data[i+1] - previousFrameData[i+1]) > 20) motion++;
+                }
+            }
+            previousFrameData = data;
+            
+            detectMode(rT/count, gT/count, bT/count);
+            updateVisuals();
+
+            const sense = parseInt(controls.sense.value) || 50;
+            const umbral = (101 - sense) * 2; 
+
+            if (motion > umbral) {
+                playNote(Math.min(motion / (umbral * 8), 1));
+            }
+        }
+    }
+
+    function detectMode(r, g, b) {
+        r/=255; g/=255; b/=255;
+        const max = Math.max(r,g,b), min = Math.min(r,g,b);
+        let h, s, l = (max+min)/2;
+        if(max!==min) {
+            const d = max-min;
+            s = l>0.5 ? d/(2-max-min) : d/(max+min);
+            switch(max){
+                case r: h=(g-b)/d+(g<b?6:0); break;
+                case g: h=(b-r)/d+2; break;
+                case b: h=(r-g)/d+4; break;
+            }
+            h/=6;
+        }
+        if (s < 0.1) return;
+        const hue = h * 360;
+        if (hue>=340 || hue<20) currentMode=GREEK_MODES.IONIAN;
+        else if (hue>=20 && hue<55) currentMode=GREEK_MODES.MIXOLYDIAN;
+        else if (hue>=55 && hue<80) currentMode=GREEK_MODES.LYDIAN;
+        else if (hue>=80 && hue<160) currentMode=GREEK_MODES.PHRYGIAN;
+        else if (hue>=160 && hue<200) currentMode=GREEK_MODES.DORIAN;
+        else if (hue>=200 && hue<270) currentMode=GREEK_MODES.AEOLIAN;
+        else if (hue>=270 && hue<340) currentMode=GREEK_MODES.LOCRIAN;
+    }
+
+    function updateVisuals() {
+        const label = document.getElementById('modeLabel');
+        const container = document.getElementById('videoContainer');
+        label.innerText = currentMode.name;
+        label.style.color = currentMode.hex;
+        container.style.borderColor = currentMode.hex;
+    }
+
+    function playNote(intensity) {
+        if (!audioCtx) return;
+        const now = audioCtx.currentTime;
+        if (now - lastNoteTime < 0.12) return;
+        lastNoteTime = now;
+
+        triggerVis(intensity);
+
+        const ratio = currentMode.ratios[Math.floor(Math.random() * currentMode.ratios.length)];
+        let oct = 1;
+        if (intensity > 0.7) oct = 2; else if (intensity < 0.3) oct = 0.5;
+        const freq = ROOT * ratio * oct;
+
+        const vS = (parseInt(controls.sine.value)||0)/100;
+        const vT = (parseInt(controls.tri.value)||0)/100;
+        const vQ = (parseInt(controls.sqr.value)||0)/100;
+        const vW = (parseInt(controls.saw.value)||0)/100;
+        const atk = (parseInt(controls.attack.value)||10)/100;
+        const rel = (parseInt(controls.release.value)||50)/100 * 2;
+        const fFreq = parseInt(controls.filter.value)||2000;
+        const dMix = (parseInt(controls.delay.value)||0)/100;
+
+        const gain = audioCtx.createGain();
+        gain.gain.setValueAtTime(0, now);
+        gain.gain.linearRampToValueAtTime(0.3, now + atk);
+        gain.gain.exponentialRampToValueAtTime(0.001, now + atk + rel);
+
+        const filt = audioCtx.createBiquadFilter();
+        filt.type = 'lowpass';
+        filt.frequency.setValueAtTime(fFreq, now);
+        filt.frequency.linearRampToValueAtTime(fFreq + (intensity*1000), now + atk);
+
+        osc('sine', freq, vS, now, atk+rel, gain);
+        osc('triangle', freq, vT, now, atk+rel, gain);
+        osc('square', freq, vQ, now, atk+rel, gain);
+        osc('sawtooth', freq, vW, now, atk+rel, gain);
+
+        gain.connect(filt);
+        filt.connect(masterGain);
+        if (dMix > 0) {
+            const send = audioCtx.createGain();
+            send.gain.value = dMix;
+            filt.connect(send);
+            send.connect(delayNode);
+        }
+    }
+
+    function osc(type, f, v, t, d, dest) {
+        if (v <= 0.01) return;
+        const o = audioCtx.createOscillator();
+        const g = audioCtx.createGain();
+        o.type = type; o.frequency.value = f; g.gain.value = v;
+        o.connect(g); g.connect(dest);
+        o.start(t); o.stop(t + d + 0.1);
+    }
+
+    function triggerVis(i) {
+        const v = document.getElementById('visualizer');
+        v.style.backgroundColor = currentMode.hex;
+        v.style.boxShadow = `0 0 ${20 + (i * 50)}px ${currentMode.hex}`;
+        v.style.opacity = 0.8 + (i * 0.2);
+        v.style.transform = `translate(-50%, -50%) scale(${1 + i})`;
+        setTimeout(() => { v.style.opacity = 0; v.style.transform = `translate(-50%, -50%) scale(1)`; }, 100);
+    }
+</script>
+</body>
+</html>
